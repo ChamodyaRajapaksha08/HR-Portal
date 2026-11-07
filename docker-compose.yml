@@ -1,0 +1,67 @@
+version: '3.8'
+
+services:
+  # 1. PostgreSQL Database සේවාව
+  postgres_db:
+    image: postgres:15-alpine
+    container_name: hrm_postgres_db
+    environment:
+      POSTGRES_USER: hrm_user
+      POSTGRES_PASSWORD: hrm_password123
+      POSTGRES_DB: hrm_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - hrm_network
+    # 🟢 Database එක සම්පූර්ණයෙන්ම වැඩ කිරීමට පටන් ගත්තාදැයි පරීක්ෂා කිරීමට මෙحص එකතු කරන්න:
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hrm_user -d hrm_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # 2. Go Backend සේවාව
+  go_backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: hrm_go_backend
+    ports:
+      - "9000:8080"
+    environment:
+      - DB_HOST=postgres_db
+      - DB_USER=hrm_user
+      - DB_PASSWORD=hrm_password123
+      - DB_NAME=hrm_db
+      - DB_PORT=5432
+    depends_on:
+      postgres_db:
+        # 🟢 ඩේටාබේස් එක සම්පූර්ණයෙන්ම සූදානම් වන තෙක් Backend එක Start වීම ැරසීම
+        condition: service_healthy
+    networks:
+      - hrm_network
+
+  # 3. Vue Frontend සේවාව
+  vue_frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: hrm_vue_frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - VITE_API_BASE_URL=http://localhost:9000
+    depends_on:
+      - go_backend
+    networks:
+      - hrm_network
+
+volumes:
+  postgres_data:
+
+networks:
+  hrm_network:
+    driver: bridge
