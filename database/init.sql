@@ -35,16 +35,8 @@ CREATE TABLE IF NOT EXISTS payroll (
     paid_date DATE DEFAULT CURRENT_DATE
 );
 
--- 4. Assignment එකේ ඉල්ලලා තියෙන විදිහට පරීක්ෂා කරලා බලන්න Sample Data (Mock Data) ටිකක් ඇතුළත් කිරීම [cite: 69]
-INSERT INTO employees (name, email, password, department, designation) VALUES
-('Kavindu Perera', 'kavindu@gmail.com', 'password123', 'IT', 'Software Engineer'),
-('Nimesha Fernando', 'nimesha@gmail.com', 'password123', 'HR', 'HR Manager'),
-('Tharushi Silva', 'tharushi@gmail.com', 'password123', 'Finance', 'Accountant');
-
-INSERT INTO leaves (employee_id, leave_type, start_date, end_date, status) VALUES
-(1, 'Sick Leave', '2026-05-20', '2026-05-22', 'Pending'),
-(2, 'Casual Leave', '2026-06-01', '2026-06-03', 'Approved');
-
-INSERT INTO payroll (employee_id, basic_salary, allowances, deductions, net_salary) VALUES
-(1, 85000.00, 15000.00, 5000.00, 95000.00),
-(2, 95000.00, 20000.00, 7000.00, 108000.00);
+-- 4. පළමු Admin user (HR Manager). Mock data නෑ.
+-- !! password එක දාන්න කලින් වෙනස් කරන්න. Login එකෙන් පස්සේ system එකෙන්ම මාරු කරගන්න.
+INSERT INTO employees (employee_id, name, email, password, department, designation, status, created_at, updated_at)
+VALUES ('EMP001', 'Admin123', 'admin123@gmail.com', 'CHANGE_ME_NOW', 'HR', 'HR Manager', 'Active', NOW(), NOW())
+ON CONFLICT DO NOTHING;

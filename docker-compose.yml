@@ -37,6 +37,8 @@ services:
       - DB_PASSWORD=hrm_password123
       - DB_NAME=hrm_db
       - DB_PORT=5432
+      - JWT_SECRET=${JWT_SECRET:?Set JWT_SECRET in the root .env file}
+      - JWT_EXPIRY_HOURS=${JWT_EXPIRY_HOURS:-8}
     depends_on:
       postgres_db:
         # 🟢 ඩේටාබේස් එක සම්පූර්ණයෙන්ම සූදානම් වන තෙක් Backend එක Start වීම ැරසීම

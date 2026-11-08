@@ -1,6 +1,7 @@
 <template>
   <div class="page-container">
     <p v-if="loadError" class="api-error" role="alert">{{ loadError }}</p>
+    <EmptyState v-if="loading" message="Loading departments..." />
     <div class="page-title-section">
       <h2>Departments</h2>
       <p class="breadcrumb">Dashboard > <span>Departments</span></p>
@@ -61,11 +62,11 @@
         <div class="form-grid">
           <label>
             Department Name
-            <input v-model="newDepartment.name" type="text" placeholder="Information Technology" required />
+            <input v-model="newDepartment.name" type="text" placeholder="Enter department name" required />
           </label>
           <label>
             Department Head
-            <input v-model="newDepartment.head" type="text" placeholder="John Doe" />
+            <input v-model="newDepartment.head" type="text" placeholder="Enter department head" />
           </label>
           <label>
             Employees
@@ -113,6 +114,9 @@
                 </div>
               </td>
             </tr>
+            <tr v-if="!loading && !pagedDepartments.length">
+              <td colspan="7"><EmptyState :message="filteredDepartments.length ? 'No departments on this page' : 'No departments yet'" /></td>
+            </tr>
           </tbody>
         </table>
       </div>
@@ -132,6 +136,7 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue';
 import { apiDelete, apiGet, apiPost, apiPut } from '@/api';
+import EmptyState from '@/components/EmptyState.vue';
 
 const departments = ref([]);
 const summary = ref({ active_departments: 0, total_employees: 0, department_heads: 0 });
@@ -141,6 +146,7 @@ const searchQuery = ref('');
 const selectedStatus = ref('');
 const editingDepartmentId = ref(null);
 const loadError = ref('');
+const loading = ref(false);
 const formError = ref('');
 const currentPage = ref(1);
 const pageSize = 8;
@@ -166,14 +172,24 @@ watch(filteredDepartments, () => {
 });
 
 const loadDepartments = async () => {
+  loading.value = true;
+  loadError.value = '';
   try {
     const data = await apiGet('/api/departments');
-    summary.value = data.summary || summary.value;
-    departments.value = data.departments || [];
+    summary.value = {
+      active_departments: Number(data.summary?.active_departments) || 0,
+      total_employees: Number(data.summary?.total_employees) || 0,
+      department_heads: Number(data.summary?.department_heads) || 0,
+    };
+    departments.value = Array.isArray(data.departments) ? data.departments : [];
     loadError.value = '';
   } catch (error) {
     console.error('Failed to load departments', error);
     loadError.value = error.message;
+    departments.value = [];
+    summary.value = { active_departments: 0, total_employees: 0, department_heads: 0 };
+  } finally {
+    loading.value = false;
   }
 };
 
@@ -272,15 +288,15 @@ onMounted(loadDepartments);
 .text-gray { color: #94a3b8; }
 
 /* TABLE CARD HOUSING */
-.table-main-wrapper { background: white; border-radius: 12px; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.03); padding: 20px; }
+.table-main-wrapper { min-width: 0; max-width: 100%; background: white; border-radius: 12px; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.03); padding: 20px; }
 .controls-action-bar { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px; margin-bottom: 20px; }
 
 /* SEARCH INPUT STRUCTURE */
-.search-field-container { position: relative; width: 300px; }
+.search-field-container { position: relative; width: 300px; min-width: 0; max-width: 100%; }
 .search-lens { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: #94a3b8; font-size: 14px; }
 .search-input-element { width: 100%; padding: 9px 14px 9px 38px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 14px; outline: none; background-color: #f8fafc; transition: 0.2s; }
 .search-input-element:focus { border-color: #10b981; background-color: white; box-shadow: 0 0 0 3px rgba(16,185,129,0.12); }
-.department-status-filter { min-height: 38px; padding: 8px 12px; border: 1px solid #d7e5df; border-radius: 8px; background: #fff; color: #18352b; font-size: 14px; }
+.department-status-filter { min-width: 0; max-width: 100%; min-height: 38px; padding: 8px 12px; border: 1px solid #d7e5df; border-radius: 8px; background: #fff; color: #18352b; font-size: 14px; }
 .department-status-filter:focus { border-color: #10b981; outline: 2px solid rgba(16,185,129,0.12); }
 .add-department-btn { background-color: #047857; color: white; border: none; padding: 10px 18px; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 14px; transition: 0.2s; }
 .add-department-btn:hover { background-color: #059669; }
@@ -335,7 +351,7 @@ onMounted(loadDepartments);
 }
 
 /* DATATABLE STYLING */
-.table-scroll-area { overflow-x: auto; }
+.table-scroll-area { overflow-x: auto; max-width: 100%; min-width: 0; }
 .corporate-table { width: 100%; border-collapse: collapse; font-size: 14px; text-align: left; }
 .corporate-table th { background-color: #f8fafc; padding: 14px 16px; font-weight: 600; color: #475569; border-bottom: 2px solid #e2e8f0; font-size: 13px; }
 .corporate-table td { padding: 14px 16px; border-bottom: 1px solid #f1f5f9; color: #334155; vertical-align: middle; }
@@ -346,6 +362,13 @@ onMounted(loadDepartments);
 .head-name-td { color: #334155; }
 .emp-count-td { font-weight: 500; color: #475569; }
 .date-td { color: #64748b; }
+
+@media (max-width: 767px) {
+  .controls-action-bar { align-items: stretch; }
+  .search-field-container { flex: 1 1 100%; width: 100%; }
+  .department-status-filter { flex: 1 1 140px; }
+  .add-department-btn { flex: 1 1 100%; }
+}
 
 /* STATUS LABELS */
 .status-badge-pill { padding: 3px 8px; border-radius: 6px; font-size: 11px; font-weight: 600; text-transform: uppercase; display: inline-block; }

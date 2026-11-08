@@ -1,8 +1,10 @@
 package main
 
 import (
+	"hrm-backend/auth"
 	"hrm-backend/config"
 	"hrm-backend/routes"
+	"log"
 	"time"
 
 	"github.com/gin-contrib/cors"
@@ -11,12 +13,16 @@ import (
 
 func main() {
 	r := gin.Default()
+	if err := auth.Initialize(); err != nil {
+		log.Fatalf("Authentication configuration error: %v", err)
+	}
+	if err := r.SetTrustedProxies(nil); err != nil {
+		log.Fatalf("Unable to configure trusted proxies: %v", err)
+	}
 
-	// 1. CORS Setup (Frontend එකට බාධාවක් නැතුව කතා කරන්න ඉඩ දීම)
-	// For local development allow requests from the frontend dev server.
 	r.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"*"},
-		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE"},
+		AllowOrigins:     []string{"http://localhost:3000"},
+		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
 		ExposeHeaders:    []string{"Content-Length"},
 		AllowCredentials: false,

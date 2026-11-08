@@ -1,6 +1,7 @@
 <template>
   <div class="page-container">
     <p v-if="loadError" class="api-error" role="alert">{{ loadError }}</p>
+    <EmptyState v-if="loading" message="Loading attendance..." />
     <div class="page-title-section">
       <h2>Attendance</h2>
       <p class="breadcrumb">Dashboard > <span>Attendance</span></p>
@@ -36,7 +37,6 @@
         <div class="metric-info-data">
           <h4>Total Employees</h4>
           <p class="metric-num-val">{{ summary.total_employees }}</p>
-          <span class="trend-indicator text-blue">● 100%</span>
         </div>
       </div>
     </div>
@@ -129,7 +129,7 @@
                 </td>
               </tr>
               <tr v-if="!pagedAttendanceRecords.length">
-                <td colspan="7" class="empty-state">No attendance records match these filters.</td>
+                <td colspan="7"><EmptyState :message="attendanceRecords.length ? 'No attendance records match these filters' : 'No attendance records yet'" /></td>
               </tr>
             </tbody>
           </table>
@@ -149,29 +149,19 @@
         <div class="chart-card">
           <h3>Attendance Overview</h3>
           <div class="pie-container">
-            <canvas id="attendanceDoughnutChart"></canvas>
+            <canvas v-if="attendanceRecords.length" id="attendanceDoughnutChart"></canvas>
+            <EmptyState v-else :message="loading ? 'Loading attendance...' : 'No attendance data yet'" height="100%" />
           </div>
         </div>
 
         <div class="chart-card department-progress-card">
           <h3>Department Wise (Present %)</h3>
           <div class="progress-list">
-            <div class="progress-item">
-              <div class="progress-info-text"><span>IT</span><span>92%</span></div>
-              <div class="bar-bg"><div class="bar-fill" style="width: 92%; background-color: #047857;"></div></div>
+            <div v-for="department in departmentAttendance" :key="department.name" class="progress-item">
+              <div class="progress-info-text"><span>{{ department.name }}</span><span>{{ department.rate }}%</span></div>
+              <div class="bar-bg"><div class="bar-fill" :style="{ width: `${department.rate}%`, backgroundColor: '#047857' }"></div></div>
             </div>
-            <div class="progress-item">
-              <div class="progress-info-text"><span>HR</span><span>88%</span></div>
-              <div class="bar-bg"><div class="bar-fill" style="width: 88%; background-color: #059669;"></div></div>
-            </div>
-            <div class="progress-item">
-              <div class="progress-info-text"><span>Finance</span><span>85%</span></div>
-              <div class="bar-bg"><div class="bar-fill" style="width: 85%; background-color: #10b981;"></div></div>
-            </div>
-            <div class="progress-item">
-              <div class="progress-info-text"><span>Marketing</span><span>75%</span></div>
-              <div class="bar-bg"><div class="bar-fill" style="width: 75%; background-color: #34d399;"></div></div>
-            </div>
+            <EmptyState v-if="!departmentAttendance.length" message="No department attendance data yet" />
           </div>
         </div>
       </div>
@@ -181,9 +171,10 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, onMounted, onBeforeUnmount, nextTick, ref, watch } from 'vue';
 import Chart from 'chart.js/auto';
 import { apiDelete, apiGet, apiPost, apiPut } from '@/api';
+import EmptyState from '@/components/EmptyState.vue';
 
 const summary = ref({ present_today: 0, absent_today: 0, late_comers: 0, total_employees: 0 });
 const attendanceRecords = ref([]);
@@ -191,6 +182,7 @@ const showCreateAttendanceForm = ref(false);
 const newAttendance = ref({ employee: '', department: '', check_in: '', check_out: '', status: 'Present' });
 const editingAttendanceId = ref(null);
 const loadError = ref('');
+const loading = ref(false);
 
 const departmentsList = ref([]);
 const selectedDepartment = ref('');
@@ -246,15 +238,30 @@ const clearFilters = () => {
 
 const attendanceRate = computed(() => {
   if (!summary.value.total_employees) return 0;
-  return ((summary.value.present_today / summary.value.total_employees) * 100).toFixed(2);
+  return ((summary.value.present_today / summary.value.total_employees) * 100).toFixed(1);
 });
 const absentRate = computed(() => {
   if (!summary.value.total_employees) return 0;
-  return ((summary.value.absent_today / summary.value.total_employees) * 100).toFixed(2);
+  return ((summary.value.absent_today / summary.value.total_employees) * 100).toFixed(1);
 });
 const lateRate = computed(() => {
   if (!summary.value.total_employees) return 0;
-  return ((summary.value.late_comers / summary.value.total_employees) * 100).toFixed(2);
+  return ((summary.value.late_comers / summary.value.total_employees) * 100).toFixed(1);
+});
+const departmentAttendance = computed(() => {
+  const grouped = new Map();
+  for (const record of attendanceRecords.value) {
+    const name = record.department?.trim();
+    if (!name) continue;
+    const current = grouped.get(name) || { total: 0, present: 0 };
+    current.total += 1;
+    if ((record.status || '').toLowerCase() === 'present') current.present += 1;
+    grouped.set(name, current);
+  }
+  return [...grouped].map(([name, counts]) => ({
+    name,
+    rate: counts.total ? ((counts.present / counts.total) * 100).toFixed(1) : '0.0',
+  }));
 });
 
 const departmentTagClass = (department) => {
@@ -273,36 +280,88 @@ const statusClass = (status) => {
   return 'present-bg';
 };
 
+const attendanceDistribution = computed(() => {
+  const counts = new Map();
+  for (const record of attendanceRecords.value) {
+    const status = record.status || 'Unknown';
+    counts.set(status, (counts.get(status) || 0) + 1);
+  }
+  return [...counts].map(([label, count]) => ({ label, count }));
+});
+
 const updateChartData = () => {
   if (chartInstance) {
-    chartInstance.data.datasets[0].data = [
-      summary.value.present_today,
-      summary.value.absent_today,
-      summary.value.late_comers
-    ];
+    chartInstance.data.labels = attendanceDistribution.value.map(item => item.label);
+    chartInstance.data.datasets[0].data = attendanceDistribution.value.map(item => item.count);
     chartInstance.update();
   }
 };
 
-const loadAttendance = async () => {
+const renderAttendanceChart = async () => {
+  await nextTick();
+  if (!attendanceRecords.value.length) {
+    chartInstance?.destroy();
+    chartInstance = null;
+    return;
+  }
+  const ctx = document.getElementById('attendanceDoughnutChart');
+  if (!ctx) return;
+  if (chartInstance) {
+    updateChartData();
+    return;
+  }
+  chartInstance = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels: attendanceDistribution.value.map(item => item.label),
+      datasets: [{
+        data: attendanceDistribution.value.map(item => item.count),
+        backgroundColor: ['#047857', '#10b981', '#a7f3d0'],
+        borderWidth: 2
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'right', labels: { boxWidth: 12, font: { size: 12 } } }
+      }
+    }
+  });
+};
+
+const loadAttendance = async (showLoading = true) => {
+  if (showLoading) loading.value = true;
+  loadError.value = '';
   try {
     const data = await apiGet('/api/attendance');
-    summary.value = data.summary || summary.value;
-    attendanceRecords.value = data.attendance || [];
-    updateChartData();
+    summary.value = {
+      present_today: Number(data.summary?.present_today) || 0,
+      absent_today: Number(data.summary?.absent_today) || 0,
+      late_comers: Number(data.summary?.late_comers) || 0,
+      total_employees: Number(data.summary?.total_employees) || 0,
+    };
+    attendanceRecords.value = Array.isArray(data.attendance) ? data.attendance : [];
+    await renderAttendanceChart();
   } catch (error) {
     console.error('Failed to load attendance', error);
     loadError.value = error.message;
+    summary.value = { present_today: 0, absent_today: 0, late_comers: 0, total_employees: 0 };
+    attendanceRecords.value = [];
+    await renderAttendanceChart();
+  } finally {
+    if (showLoading) loading.value = false;
   }
 };
 
 const loadDepartments = async () => {
   try {
     const data = await apiGet('/api/departments');
-    departmentsList.value = data.departments || [];
+    departmentsList.value = Array.isArray(data.departments) ? data.departments : [];
   } catch (error) {
     console.error('Failed to load departments', error);
     loadError.value = error.message;
+    departmentsList.value = [];
   }
 };
 
@@ -362,31 +421,9 @@ const deleteAttendance = async (record) => {
 };
 
 onMounted(async () => {
-  await loadDepartments();
-  await loadAttendance();
-  await new Promise(resolve => setTimeout(resolve, 50));
-  const ctx = document.getElementById('attendanceDoughnutChart');
-  if (ctx) {
-    chartInstance = new Chart(ctx, {
-      type: 'doughnut',
-      data: {
-        labels: ['Present', 'Absent', 'Late'],
-        datasets: [{
-          data: [summary.value.present_today, summary.value.absent_today, summary.value.late_comers],
-          backgroundColor: ['#047857', '#10b981', '#a7f3d0'],
-          borderWidth: 2
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          legend: { position: 'right', labels: { boxWidth: 12, font: { size: 12 } } }
-        }
-      }
-    });
-
-  }
+  loading.value = true;
+  await Promise.all([loadDepartments(), loadAttendance(false)]);
+  loading.value = false;
 });
 
 onBeforeUnmount(() => chartInstance?.destroy());
@@ -421,12 +458,12 @@ onBeforeUnmount(() => chartInstance?.destroy());
 @media (max-width: 1000px) { .attendance-split-grid { grid-template-columns: 1fr; } }
 
 /* LEFT TABLE HOUSING */
-.table-main-wrapper { background: white; border-radius: 12px; border: 1px solid #e2e8f0; padding: 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.02); }
+.table-main-wrapper { min-width: 0; max-width: 100%; background: white; border-radius: 12px; border: 1px solid #e2e8f0; padding: 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.02); }
 .controls-action-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 12px; }
-.filters-left-cluster { display: flex; flex: 1 1 360px; gap: 10px; align-items: center; flex-wrap: wrap; }
+.filters-left-cluster { display: flex; flex: 1 1 360px; min-width: 0; gap: 10px; align-items: center; flex-wrap: wrap; }
 .date-picker-mock { background: #f1f5f9; padding: 8px 14px; border-radius: 8px; font-size: 13px; font-weight: 600; color: #334155; }
-.dropdown-filter { min-height: 38px; padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px; color: #475569; background: white; cursor: pointer; }
-.action-buttons-right { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.dropdown-filter { min-width: 0; max-width: 100%; min-height: 38px; padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px; color: #475569; background: white; cursor: pointer; }
+.action-buttons-right { display: flex; min-width: 0; max-width: 100%; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
 .add-record-btn { background-color: #047857; color: white; border: none; padding: 8px 14px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; }
 .filter-btn { min-height: 38px; background-color: #047857; color: white; border: none; padding: 8px 14px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; }
 .filter-btn:hover { background-color: #059669; }
@@ -434,7 +471,7 @@ onBeforeUnmount(() => chartInstance?.destroy());
 .clear-filter-btn:hover { background: #f8fafc; }
 
 /* CORPORATE TABLE */
-.table-scroll-area { overflow-x: auto; }
+.table-scroll-area { overflow-x: auto; max-width: 100%; min-width: 0; }
 .corporate-table { width: 100%; border-collapse: collapse; font-size: 13px; text-align: left; }
 .corporate-table th { background-color: #f8fafc; padding: 12px 14px; font-weight: 600; color: #475569; border-bottom: 2px solid #e2e8f0; }
 .corporate-table td { padding: 12px 14px; border-bottom: 1px solid #f1f5f9; color: #334155; vertical-align: middle; }
@@ -471,10 +508,10 @@ onBeforeUnmount(() => chartInstance?.destroy());
 .nav-number-btn { background: white; border: 1px solid #e2e8f0; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border-radius: 6px; cursor: pointer; font-size: 12px; }
 .nav-number-btn.active-page { background-color: #047857; color: white; border-color: #047857; }
 
-@media (max-width: 700px) {
+@media (max-width: 767px) {
   .controls-action-bar { align-items: stretch; }
   .filters-left-cluster, .action-buttons-right { width: 100%; }
-  .filters-left-cluster > *, .action-buttons-right > * { flex: 1 1 140px; }
+  .filters-left-cluster > *, .action-buttons-right > * { min-width: 0; max-width: 100%; flex: 1 1 140px; }
 }
 
 @keyframes fadeInView {

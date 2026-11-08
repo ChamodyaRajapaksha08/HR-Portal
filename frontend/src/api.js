@@ -1,6 +1,12 @@
-// Prefer Vite env variable `VITE_API_BASE` if provided, otherwise fallback to localhost:8080
+// Prefer Vite env variable `VITE_API_BASE` if provided, otherwise use the local backend.
 // Support either VITE_API_BASE or VITE_API_BASE_URL (docker-compose uses VITE_API_BASE_URL)
-export const API_BASE_URL = import.meta.env.VITE_API_BASE || import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8080';
+export const API_BASE_URL = import.meta.env.VITE_API_BASE || import.meta.env.VITE_API_BASE_URL || 'http://localhost:9000';
+
+export function clearAuthSession() {
+  localStorage.removeItem('authToken');
+  localStorage.removeItem('authUser');
+  localStorage.removeItem('rememberedEmail');
+}
 
 async function apiRequest(path, options = {}) {
   const headers = new Headers(options.headers || {});
@@ -21,6 +27,14 @@ async function apiRequest(path, options = {}) {
     response = await fetch(`${baseUrl}${apiPath}`, { ...options, headers });
   } catch (error) {
     throw new Error(`Cannot connect to API at ${API_BASE_URL}: ${error.message}`);
+  }
+
+  const apiPath = path.startsWith('/') ? path : `/${path}`;
+  if (response.status === 401 && apiPath !== '/api/login') {
+    clearAuthSession();
+    if (window.location.pathname !== '/login' || window.location.search !== '?sessionExpired=1') {
+      window.location.assign('/login?sessionExpired=1');
+    }
   }
 
   const contentType = response.headers.get('content-type') || '';

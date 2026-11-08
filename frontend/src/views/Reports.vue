@@ -1,6 +1,7 @@
 <template>
   <div class="reports-container">
     <p v-if="loadError" role="alert" class="api-error">{{ loadError }}</p>
+    <EmptyState v-if="loading" message="Loading reports..." />
     <div class="page-header">
       <div class="header-title">
         <h1>📊 Advanced Reports & Analytics</h1>
@@ -8,60 +9,29 @@
       </div>
       <div class="header-actions">
         <button class="btn-primary" @click="exportReports">📥 Export All Reports</button>
-        <button class="btn-secondary" @click="showCreateReportForm = !showCreateReportForm">+ Generate Report</button>
       </div>
     </div>
-
-    <form v-if="showCreateReportForm" class="create-record-form report-create-form" @submit.prevent="submitNewReport">
-      <h2 class="form-title">Generate a Report</h2>
-      <div class="form-grid">
-        <label>
-          Report Name
-          <input v-model="newReport.name" type="text" placeholder="Employee Turnover" required />
-        </label>
-        <label>
-          Type
-          <select v-model="newReport.type">
-            <option>PDF</option>
-            <option>EXCEL</option>
-          </select>
-        </label>
-        <label>
-          Generated Date
-          <input v-model="newReport.generated_date" type="text" placeholder="May 24, 2026" />
-        </label>
-        <label>
-          Status
-          <select v-model="newReport.status">
-            <option>Ready</option>
-            <option>Pending</option>
-          </select>
-        </label>
-      </div>
-      <div class="form-actions">
-        <button type="submit" class="submit-btn">Create Report</button>
-        <button type="button" class="cancel-btn" @click="showCreateReportForm = false">Cancel</button>
-      </div>
-    </form>
 
     <div class="analytics-grid">
       <div class="analytics-card">
         <h3>Monthly Attendance Rate</h3>
         <div class="chart-dummy">
-          <div class="progress-circle">
-            <span class="circle-value">{{ summary.attendance_rate }}</span>
+          <div v-if="hasAttendanceRate" class="progress-circle" :style="{ background: `conic-gradient(#10b981 ${attendanceRate}%, #e2e8f0 0)` }">
+            <span class="circle-value">{{ formatPercent(summary.attendance_rate) }}</span>
           </div>
+          <EmptyState v-else :message="loading ? 'Loading attendance data...' : 'No attendance data yet'" height="130px" />
         </div>
-        <p class="card-desc">Excellent attendance this month compared to last month (+1.5%).</p>
+        <p v-if="hasAttendanceRate" class="card-desc">Attendance rate from the latest report data.</p>
       </div>
 
       <div class="analytics-card">
         <h3>Department Wise Performance (%)</h3>
         <div class="progress-list">
           <div class="progress-item" v-for="item in summary.performance" :key="item.division">
-            <div class="item-info"><span>{{ item.division }}</span><span>{{ item.value }}</span></div>
-            <div class="bar-bg"><div class="bar-fill" :style="{ width: item.value }"></div></div>
+            <div class="item-info"><span>{{ item.division }}</span><span>{{ formatPercent(item.value) }}</span></div>
+            <div class="bar-bg"><div class="bar-fill" :style="{ width: `${clampPercent(item.value)}%` }"></div></div>
           </div>
+          <EmptyState v-if="loading || !summary.performance.length" :message="loading ? 'Loading performance data...' : 'No performance data yet'" />
         </div>
       </div>
     </div>
@@ -87,6 +57,12 @@
               <td><span class="status-ready">{{ report.status }}</span></td>
               <td><button class="btn-download" @click="downloadReport(report)">Download</button></td>
             </tr>
+            <tr v-if="!loading && !reports.length">
+              <td colspan="5"><EmptyState message="No reports yet" /></td>
+            </tr>
+            <tr v-if="loading">
+              <td colspan="5"><EmptyState message="Loading reports..." /></td>
+            </tr>
           </tbody>
         </table>
       </div>
@@ -95,14 +71,24 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { apiGet } from '@/api';
+import EmptyState from '@/components/EmptyState.vue';
 
-const summary = ref({ attendance_rate: '0%', performance: [] });
+const summary = ref({ attendance_rate: null, performance: [] });
 const reports = ref([]);
 const loadError = ref('');
-const showCreateReportForm = ref(false);
-const newReport = ref({ name: '', type: 'PDF', generated_date: '', status: 'Ready' });
+const loading = ref(false);
+const attendanceRate = computed(() => {
+  const value = Number(summary.value.attendance_rate);
+  return Number.isFinite(value) ? Math.min(100, Math.max(0, value)) : 0;
+});
+const hasAttendanceRate = computed(() => summary.value.attendance_rate !== null && summary.value.attendance_rate !== undefined && Number.isFinite(Number(summary.value.attendance_rate)));
+const clampPercent = value => {
+  const number = Number(value ?? 0);
+  return Number.isFinite(number) ? Math.min(100, Math.max(0, number)) : 0;
+};
+const formatPercent = value => `${clampPercent(value).toFixed(1)}%`;
 
 const downloadFile = (name, contents, type = 'text/csv;charset=utf-8') => {
   const url = URL.createObjectURL(new Blob([contents], { type }));
@@ -170,29 +156,23 @@ const downloadReport = (report) => {
 };
 
 const loadReports = async () => {
+  loading.value = true;
+  loadError.value = '';
   try {
     const data = await apiGet('/api/reports');
-    summary.value = data.summary || summary.value;
-    reports.value = data.reports || [];
+    summary.value = {
+      attendance_rate: data.summary?.attendance_rate ?? null,
+      performance: Array.isArray(data.summary?.performance) ? data.summary.performance : [],
+    };
+    reports.value = Array.isArray(data.reports) ? data.reports : [];
   } catch (error) {
     console.error('Failed to load reports', error);
     loadError.value = error.message;
+    summary.value = { attendance_rate: null, performance: [] };
+    reports.value = [];
+  } finally {
+    loading.value = false;
   }
-};
-
-const resetNewReport = () => {
-  newReport.value = { name: '', type: 'PDF', generated_date: '', status: 'Ready' };
-};
-
-const submitNewReport = () => {
-  reports.value.unshift({
-    name: newReport.value.name || 'New Report',
-    type: newReport.value.type,
-    generated_date: newReport.value.generated_date || new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-    status: newReport.value.status,
-  });
-  resetNewReport();
-  showCreateReportForm.value = false;
 };
 
 onMounted(loadReports);
@@ -206,6 +186,8 @@ onMounted(loadReports);
   font-family: 'Inter', sans-serif;
   background-color: #f8fafc;
   min-height: 100%;
+  min-width: 0;
+  max-width: 100%;
   box-sizing: border-box;
 }
 .api-error { color: #b91c1c; background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 10px 14px; }
@@ -234,6 +216,7 @@ onMounted(loadReports);
 }
 .btn-primary:hover { background-color: #0c5240; }
 .header-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.header-actions { min-width: 0; max-width: 100%; }
 .btn-secondary { background: white; color: #062c22; border: 1px solid #cbd5e1; padding: 9px 16px; border-radius: 25px; font-weight: 600; cursor: pointer; }
 .btn-secondary:hover { background: #ecfdf5; border-color: #86c7ac; }
 .report-create-form { margin: 0 0 24px; padding: 24px; background: white; border: 1px solid #e2e8f0; border-radius: 15px; box-shadow: 0 4px 12px rgba(15, 23, 42, 0.04); }
@@ -263,11 +246,11 @@ onMounted(loadReports);
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
 }
 .analytics-card h3 { font-size: 15px; color: #062c22; margin : 0 0 15px; font-weight: 600; }
-.chart-dummy { display: flex; justify-content: center; padding: 15px 0; }
+.chart-dummy { display: flex; justify-content: center; padding: 15px 0; min-height: 160px; }
 .progress-circle {
   width: 100px; height: 100px;
   border-radius: 50%;
-  background: conic-gradient(#10b981 94%, #e2e8f0 0);
+  background: #e2e8f0;
   display: flex; align-items: center; justify-content: center;
 }
 .circle-value {
@@ -285,11 +268,13 @@ onMounted(loadReports);
 
 /* Table */
 .report-table-section {
+  min-width: 0;
+  max-width: 100%;
   background: white; border: 1px solid #e8edf2; border-radius: 15px; padding: 24px;
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
 }
 .report-table-section h3 { font-size: 16px; color: #062c22; margin: 0 0 18px; font-weight: 700; }
-.report-table-scroll { width: 100%; overflow-x: auto; }
+.report-table-scroll { width: 100%; max-width: 100%; min-width: 0; overflow-x: auto; }
 .report-table { width: 100%; min-width: 600px; border-collapse: collapse; font-size: 13px; text-align: left; }
 .report-table th { padding: 14px 16px; background: #f8fafc; color: #475569; font-weight: 600; white-space: nowrap; }
 .report-table td { padding: 15px 16px; border-bottom: 1px solid #f1f5f9; color: #334155; }
@@ -303,6 +288,7 @@ onMounted(loadReports);
 @media (max-width: 760px) {
   .reports-container { padding: 18px; }
   .page-header { align-items: flex-start; flex-direction: column; }
+  .header-actions, .header-actions button { width: 100%; }
   .analytics-grid { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 480px) {

@@ -1,6 +1,9 @@
 <template>
   <div class="page-container">
     <p v-if="loadError" class="api-error" role="alert">{{ loadError }}</p>
+    <p v-if="actionError" class="api-error" role="alert">{{ actionError }}</p>
+    <p v-if="actionSuccess" class="success-message" role="status">{{ actionSuccess }}</p>
+    <EmptyState v-if="loading" message="Loading leave requests..." />
     <div class="page-title-section">
       <h2>Leaves</h2>
       <p class="breadcrumb">Dashboard > <span>Leaves</span></p>
@@ -12,7 +15,6 @@
         <div class="metric-info-data">
           <h4>Total Leave Requests</h4>
           <p class="metric-num-val">{{ summary.total_leave_requests }}</p>
-          <span class="trend-indicator text-green">▲ 3 this month</span>
         </div>
       </div>
       <div class="metric-card-box">
@@ -20,7 +22,6 @@
         <div class="metric-info-data">
           <h4>Pending Requests</h4>
           <p class="metric-num-val">{{ summary.pending_requests }}</p>
-          <span class="trend-indicator text-orange">● 40.00%</span>
         </div>
       </div>
       <div class="metric-card-box">
@@ -28,7 +29,6 @@
         <div class="metric-info-data">
           <h4>Approved</h4>
           <p class="metric-num-val">{{ summary.approved }}</p>
-          <span class="trend-indicator text-green">● 46.67%</span>
         </div>
       </div>
       <div class="metric-card-box">
@@ -36,7 +36,6 @@
         <div class="metric-info-data">
           <h4>Rejected</h4>
           <p class="metric-num-val">{{ summary.rejected }}</p>
-          <span class="trend-indicator text-red">● 13.33%</span>
         </div>
       </div>
     </div>
@@ -66,7 +65,7 @@
           <div class="form-grid">
             <label>
               Employee
-              <input v-model="newLeave.employee" type="text" placeholder="Kasun Perera" required />
+              <input v-model="newLeave.employee" type="text" placeholder="Enter employee name" required />
             </label>
             <label>
               Leave Type
@@ -130,10 +129,19 @@
                 <td class="date-applied">{{ request.applied_on }}</td>
                 <td>
                   <div class="action-btn-group">
-                    <button class="table-icon-btn edit-color" title="Edit leave request" @click="editLeave(request)">📝</button>
-                    <button class="table-icon-btn delete-color" title="Delete leave request" @click="deleteLeave(request)">🗑️</button>
+                    <template v-if="request.status === 'Pending' && !isOwnRequest(request)">
+                      <button class="table-icon-btn approve-color" title="Approve leave request" @click="changeLeaveStatus(request, 'Approved')">✓ Approve</button>
+                      <button class="table-icon-btn reject-color" title="Reject leave request" @click="changeLeaveStatus(request, 'Rejected')">✕ Reject</button>
+                    </template>
+                    <template v-if="request.status === 'Pending'">
+                      <button class="table-icon-btn edit-color" title="Edit leave request" @click="editLeave(request)">📝</button>
+                      <button class="table-icon-btn delete-color" title="Delete leave request" @click="deleteLeave(request)">🗑️</button>
+                    </template>
                   </div>
                 </td>
+              </tr>
+              <tr v-if="!loading && !pagedLeaveRequests.length">
+                <td colspan="9"><EmptyState :message="filteredLeaveRequests.length ? 'No leave requests on this page' : 'No leave requests yet'" /></td>
               </tr>
             </tbody>
           </table>
@@ -153,7 +161,8 @@
         <div class="chart-card">
           <h3>Leave Type Distribution</h3>
           <div class="pie-container">
-            <canvas id="leaveTypeDoughnutChart"></canvas>
+            <canvas v-if="leaveTypeDistribution.length" id="leaveTypeDoughnutChart"></canvas>
+            <EmptyState v-else :message="loading ? 'Loading leave data...' : 'No leave data yet'" height="100%" />
           </div>
         </div>
 
@@ -173,7 +182,7 @@
                 <span class="days-badge" :class="index % 2 === 0 ? 'b-blue' : 'b-purple'">{{ leave.days }} {{ leave.days === 1 ? 'day' : 'days' }}</span>
               </div>
             </div>
-            <p v-if="!upcomingLeaves.length" class="no-upcoming-leaves">No upcoming approved or pending leaves.</p>
+            <EmptyState v-if="loading || !upcomingLeaves.length" :message="loading ? 'Loading upcoming leaves...' : 'No upcoming approved or pending leaves'" />
           </div>
         </div>
       </div>
@@ -186,6 +195,7 @@
 import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue';
 import Chart from 'chart.js/auto';
 import { apiDelete, apiGet, apiPost, apiPut } from '@/api';
+import EmptyState from '@/components/EmptyState.vue';
 
 const summary = ref({ total_leave_requests: 0, pending_requests: 0, approved: 0, rejected: 0 });
 const leaveRequests = ref([]);
@@ -197,10 +207,22 @@ const selectedStatus = ref('All Requests');
 const selectedLeaveType = ref('');
 const editingLeaveId = ref(null);
 const loadError = ref('');
+const actionError = ref('');
+const actionSuccess = ref('');
+const loading = ref(false);
+let signedInUser = {};
 const currentPage = ref(1);
 const pageSize = 8;
 const leaveStatuses = ['All Requests', 'Pending', 'Approved', 'Rejected'];
 const leaveTypes = ['Annual', 'Medical', 'Personal', 'Sick'];
+const leaveTypeDistribution = computed(() => {
+  const counts = new Map();
+  for (const request of leaveRequests.value) {
+    const leaveType = request.leave_type?.trim();
+    if (leaveType) counts.set(leaveType, (counts.get(leaveType) || 0) + 1);
+  }
+  return [...counts].map(([label, count]) => ({ label, count }));
+});
 const upcomingLeaves = computed(() => {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -258,15 +280,72 @@ const statusClass = (status) => {
   return '';
 };
 
+const isOwnRequest = request => {
+  if (request.employee_id && signedInUser.employee_id) {
+    return request.employee_id === signedInUser.employee_id;
+  }
+  const ownName = (signedInUser.name || signedInUser.full_name || '').trim().toLowerCase();
+  return Boolean(ownName && (request.employee || '').trim().toLowerCase() === ownName);
+};
+
 const loadLeaves = async () => {
+  loading.value = true;
+  loadError.value = '';
   try {
     const data = await apiGet('/api/leaves');
-    summary.value = data.summary || summary.value;
-    leaveRequests.value = data.requests || [];
+    summary.value = {
+      total_leave_requests: Number(data.summary?.total_leave_requests) || 0,
+      pending_requests: Number(data.summary?.pending_requests) || 0,
+      approved: Number(data.summary?.approved) || 0,
+      rejected: Number(data.summary?.rejected) || 0,
+    };
+    leaveRequests.value = Array.isArray(data.requests) ? data.requests : [];
   } catch (error) {
     console.error('Failed to load leaves', error);
     loadError.value = error.message;
+    summary.value = { total_leave_requests: 0, pending_requests: 0, approved: 0, rejected: 0 };
+    leaveRequests.value = [];
+  } finally {
+    loading.value = false;
   }
+  await renderLeaveChart();
+};
+
+const renderLeaveChart = async () => {
+  await nextTick();
+  if (!leaveTypeDistribution.value.length) {
+    leaveChart?.destroy();
+    leaveChart = null;
+    return;
+  }
+  const ctx = document.getElementById('leaveTypeDoughnutChart');
+  if (!ctx) return;
+  const labels = leaveTypeDistribution.value.map(item => item.label);
+  const values = leaveTypeDistribution.value.map(item => item.count);
+  if (leaveChart) {
+    leaveChart.data.labels = labels;
+    leaveChart.data.datasets[0].data = values;
+    leaveChart.update();
+    return;
+  }
+  leaveChart = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels,
+      datasets: [{
+        data: values,
+        backgroundColor: ['#244b3e', '#047857', '#10b981', '#6ee7b7'],
+        borderWidth: 1
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'right', labels: { boxWidth: 10, font: { size: 11 } } }
+      }
+    }
+  });
 };
 
 const resetNewLeaveRequest = () => {
@@ -323,32 +402,38 @@ const deleteLeave = async (request) => {
   }
 };
 
-onMounted(async () => {
-  await loadLeaves();
-  const ctx = document.getElementById('leaveTypeDoughnutChart');
-  if (ctx) {
-    leaveChart = new Chart(ctx, {
-      type: 'doughnut',
-      data: {
-        labels: leaveTypes,
-        datasets: [{
-          data: [46.7, 26.7, 20.0, 6.7],
-          backgroundColor: ['#244b3e', '#047857', '#10b981', '#6ee7b7'],
-          borderWidth: 1
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          legend: { position: 'right', labels: { boxWidth: 10, font: { size: 11 } } }
-        }
-      }
+const changeLeaveStatus = async (request, status) => {
+  const action = status === 'Approved' ? 'approve' : 'reject';
+  if (!window.confirm(`Are you sure you want to ${action} ${request.employee}'s leave request?`)) return;
+  actionError.value = '';
+  actionSuccess.value = '';
+  try {
+    await apiPut(`/api/leaves/${request.id}`, {
+      employee_id: request.employee_id,
+      leave_type: request.leave_type,
+      from_date: request.from_date,
+      to_date: request.to_date,
+      days: request.days,
+      reason: request.reason,
+      status,
     });
-
-    onBeforeUnmount(() => leaveChart?.destroy());
+    await loadLeaves();
+    actionSuccess.value = `Leave request ${status.toLowerCase()} successfully.`;
+  } catch (requestError) {
+    actionError.value = requestError.message || `Unable to ${action} leave request.`;
   }
+};
+
+onMounted(async () => {
+  try {
+    signedInUser = JSON.parse(localStorage.getItem('authUser') || '{}');
+  } catch {
+    signedInUser = {};
+  }
+  await loadLeaves();
 });
+
+onBeforeUnmount(() => leaveChart?.destroy());
 </script>
 
 <style scoped>
@@ -380,20 +465,22 @@ onMounted(async () => {
 .table-main-wrapper { background: white; border-radius: 12px; border: 1px solid #e2e8f0; padding: 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.02); min-width: 0; }
 .table-tab-filters { display: flex; align-items: center; margin-bottom: 20px; }
 
-.filters-right-cluster { display: grid; grid-template-columns: minmax(180px, 1fr) repeat(2, minmax(135px, 155px)) auto; gap: 12px; align-items: center; width: 100%; }
+.filters-right-cluster { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; width: 100%; min-width: 0; }
 .search-field-container { position: relative; width: 100%; min-width: 0; }
+.filters-right-cluster > .search-field-container { flex: 1 1 180px; }
+.filters-right-cluster > .dropdown-filter { flex: 0 1 155px; }
 .search-lens { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: #94a3b8; font-size: 12px; }
 .search-input-element { width: 100%; box-sizing: border-box; padding: 9px 10px 9px 30px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px; background-color: #f8fafc; outline: none; }
 .search-input-element:focus, .dropdown-filter:focus { border-color: #10b981; outline: 2px solid rgba(16, 185, 129, 0.12); }
 .dropdown-filter { width: 100%; min-width: 0; box-sizing: border-box; padding: 9px 10px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px; color: #475569; background: white; cursor: pointer; }
-.add-record-btn { min-height: 37px; padding: 8px 14px; border: 0; border-radius: 8px; color: white; background: #047857; font-size: 13px; font-weight: 600; white-space: nowrap; cursor: pointer; transition: background-color 0.2s; }
+.add-record-btn { min-height: 37px; max-width: 100%; padding: 8px 14px; border: 0; border-radius: 8px; color: white; background: #047857; font-size: 13px; font-weight: 600; white-space: nowrap; cursor: pointer; transition: background-color 0.2s; }
 .add-record-btn:hover { background: #059669; }
 .filter-btn { background-color: #047857; color: white; border: none; padding: 8px 14px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; }
 
-@media (max-width: 700px) {
-  .filters-right-cluster { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .search-field-container { grid-column: 1 / -1; }
-  .add-record-btn { width: 100%; }
+@media (max-width: 767px) {
+  .filters-right-cluster > .search-field-container { flex: 1 1 100%; }
+  .filters-right-cluster > .dropdown-filter { flex: 1 1 calc(50% - 6px); width: calc(50% - 6px); max-width: 100%; }
+  .filters-right-cluster > .add-record-btn { flex: 1 1 100%; width: 100%; }
 }
 
 /* FORM CARD */
@@ -411,7 +498,7 @@ onMounted(async () => {
 .cancel-btn:hover { background: #f1f5f9; }
 
 /* CORPORATE TABLE WITH EXTRA OVERFLOW CONSTRAINTS */
-.table-scroll-area { overflow-x: auto; width: 100%; -webkit-overflow-scrolling: touch; }
+.table-scroll-area { overflow-x: auto; width: 100%; max-width: 100%; min-width: 0; -webkit-overflow-scrolling: touch; }
 .corporate-table { width: 100%; border-collapse: collapse; font-size: 13px; text-align: left; white-space: nowrap; }
 .corporate-table th { background-color: #f8fafc; padding: 12px 14px; font-weight: 600; color: #475569; border-bottom: 2px solid #e2e8f0; }
 .corporate-table td { padding: 12px 14px; border-bottom: 1px solid #f1f5f9; color: #334155; vertical-align: middle; }
@@ -429,6 +516,10 @@ onMounted(async () => {
 .action-btn-group { display: flex; gap: 6px; justify-content: center; }
 .table-icon-btn { background: none; border: 1px solid #e2e8f0; padding: 5px 8px; border-radius: 6px; cursor: pointer; font-size: 13px; }
 .table-icon-btn:hover { background-color: #f8fafc; }
+.approve-color { color: #047857; }
+.reject-color { color: #b91c1c; }
+.success-message { color: #047857; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 10px 14px; margin: 0 0 16px; }
+.action-btn-group { flex-wrap: wrap; }
 .edit-color { color: #047857; }
 .delete-color { color: #047857; }
 

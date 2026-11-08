@@ -1,6 +1,7 @@
 <template>
   <div class="page-container">
     <p v-if="loadError" class="api-error" role="alert">{{ loadError }}</p>
+    <EmptyState v-if="loading" message="Loading employees..." />
     <div class="employee-stats-grid">
       <div class="emp-stat-card border-blue">
         <div class="stat-icon-wrap blue-bg">👥</div>
@@ -49,11 +50,11 @@
           </label>
           <label>
             Full Name
-            <input v-model="newEmployee.full_name" type="text" placeholder="Jane Doe" required />
+            <input v-model="newEmployee.full_name" type="text" placeholder="Enter full name" required />
           </label>
           <label>
             Email
-            <input v-model="newEmployee.email" type="email" placeholder="jane.doe@example.com" required />
+            <input v-model="newEmployee.email" type="email" placeholder="name@company.com" required />
           </label>
           
           <label>
@@ -63,11 +64,11 @@
           
           <label>
             Department
-            <input v-model="newEmployee.department" type="text" placeholder="Finance" required />
+            <input v-model="newEmployee.department" type="text" placeholder="Enter department" required />
           </label>
           <label>
             Position
-            <input v-model="newEmployee.position" type="text" placeholder="Accountant" required />
+            <input v-model="newEmployee.position" type="text" placeholder="Enter position" required />
           </label>
           <label>
             Status
@@ -101,7 +102,7 @@
               <td class="emp-id">#{{ employee.employee_id }}</td>
               <td>
                 <div class="user-cell">
-                  <div class="user-avatar-small">{{ employee.full_name.slice(0, 2).toUpperCase() }}</div>
+                  <div class="user-avatar-small">{{ (employee.full_name || '').slice(0, 2).toUpperCase() }}</div>
                   <div>
                     <span class="user-fullname">{{ employee.full_name }}</span>
                     <span class="user-email">{{ employee.email }}</span>
@@ -117,6 +118,9 @@
                   <button class="icon-btn delete-btn" title="Delete employee" @click="deleteEmployee(employee)">🗑️</button>
                 </div>
               </td>
+            </tr>
+            <tr v-if="!loading && !pagedEmployees.length">
+              <td colspan="6"><EmptyState :message="filteredEmployees.length ? 'No employees on this page' : 'No employees yet'" /></td>
             </tr>
           </tbody>
         </table>
@@ -137,6 +141,7 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue';
 import { apiDelete, apiGet, apiPost, apiPut } from '@/api';
+import EmptyState from '@/components/EmptyState.vue';
 
 const employees = ref([]);
 const showCreateForm = ref(false);
@@ -144,6 +149,7 @@ const searchQuery = ref('');
 const selectedDepartment = ref('');
 const editingEmployeeId = ref('');
 const loadError = ref('');
+const loading = ref(false);
 const formError = ref('');
 const currentPage = ref(1);
 const pageSize = 8;
@@ -200,12 +206,17 @@ const generateEmployeeId = () => {
 };
 
 const loadEmployees = async () => {
+  loading.value = true;
+  loadError.value = '';
   try {
     const data = await apiGet('/api/employees');
     employees.value = Array.isArray(data) ? data : [];
   } catch (error) {
     console.error('Failed to load employees', error);
     loadError.value = error.message;
+    employees.value = [];
+  } finally {
+    loading.value = false;
   }
 };
 
@@ -314,14 +325,14 @@ onMounted(loadEmployees);
 .controls-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px; margin-bottom: 20px; }
 
 /* SEARCH BOX */
-.search-box-wrap { position: relative; width: 320px; }
+.search-box-wrap { position: relative; width: 320px; min-width: 0; max-width: 100%; }
 .search-icon { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: #94a3b8; font-size: 14px; }
 .search-input { width: 100%; padding: 10px 14px 10px 40px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 14px; outline: none; transition: 0.2s; background-color: #f8fafc; }
 .search-input:focus { border-color: #10b981; background-color: white; box-shadow: 0 0 0 3px rgba(16,185,129,0.12); }
 
 /* FILTERS & ADD BUTTON */
-.filter-actions { display: flex; gap: 12px; align-items: center; }
-.filter-dropdown { padding: 10px 14px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 14px; color: #475569; outline: none; background: white; cursor: pointer; }
+.filter-actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; min-width: 0; max-width: 100%; }
+.filter-dropdown { min-width: 0; max-width: 100%; padding: 10px 14px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 14px; color: #475569; outline: none; background: white; cursor: pointer; }
 .add-emp-btn { background-color: #047857; color: white; border: none; padding: 10px 18px; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 14px; transition: 0.2s; }
 .add-emp-btn:hover { background-color: #059669; transform: translateY(-1px); }
 
@@ -338,7 +349,7 @@ onMounted(loadEmployees);
 .cancel-btn:hover { background-color: #f8fafc; }
 
 /* PREMIUM TABLE SETUP */
-.table-responsive { overflow-x: auto; border: 1px solid #e2e8f0; border-radius: 12px; }
+.table-responsive { overflow-x: auto; max-width: 100%; min-width: 0; border: 1px solid #e2e8f0; border-radius: 12px; }
 .premium-table { width: 100%; border-collapse: collapse; text-align: left; font-size: 14px; background: white; }
 .premium-table th { background-color: #f8fafc; padding: 14px 20px; font-weight: 600; color: #475569; border-bottom: 1px solid #e2e8f0; text-transform: uppercase; font-size: 12px; letter-spacing: 0.5px; }
 .premium-table td { padding: 16px 20px; border-bottom: 1px solid #f1f5f9; color: #334155; vertical-align: middle; }
@@ -349,6 +360,14 @@ onMounted(loadEmployees);
 .user-avatar-small { width: 36px; height: 36px; border-radius: 50%; background: #e2e8f0; color: #334155; font-weight: 700; display: flex; align-items: center; justify-content: center; font-size: 13px; }
 .user-fullname { display: block; font-weight: 600; color: #0f172a; }
 .user-email { display: block; font-size: 12px; color: #64748b; }
+
+@media (max-width: 767px) {
+  .controls-header { align-items: stretch; }
+  .search-box-wrap { width: 100%; }
+  .filter-actions { width: 100%; }
+  .filter-dropdown { flex: 1 1 150px; }
+  .add-emp-btn { flex: 1 1 100%; }
+}
 
 /* DEPARTMENT TAGS */
 .dept-tag { padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 500; }

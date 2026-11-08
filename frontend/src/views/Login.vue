@@ -73,10 +73,11 @@
 
 <script setup>
 import { onMounted, ref } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { apiPost } from '../api';
 
 const router = useRouter();
+const route = useRoute();
 
 const email = ref('');
 const password = ref('');
@@ -84,6 +85,9 @@ const errorMessage = ref('');
 const rememberMe = ref(false);
 
 onMounted(() => {
+  if (route.query.sessionExpired === '1') {
+    errorMessage.value = 'Session expired, please log in again';
+  }
   const savedEmail = localStorage.getItem('rememberedEmail');
   if (savedEmail) {
     email.value = savedEmail;
@@ -100,28 +104,25 @@ const handleLogin = async () => {
       password: password.value
     });
 
-    if (data.token) {
-      localStorage.setItem('authToken', data.token);
-    }
-    localStorage.setItem('authUser', JSON.stringify({
-      full_name: data.full_name,
-      email: data.email,
-      position: data.position,
-    }));
+    if (!data.token || !data.user) throw new Error('The server returned an invalid login response.');
+    localStorage.setItem('authToken', data.token);
+    const user = { ...data.user, full_name: data.user.name };
+    localStorage.setItem('authUser', JSON.stringify(user));
     if (rememberMe.value) {
       localStorage.setItem('rememberedEmail', email.value);
     } else {
       localStorage.removeItem('rememberedEmail');
     }
     const redirect = router.currentRoute.value.query.redirect;
+    const home = '/dashboard';
     router.replace(
       typeof redirect === 'string' && redirect.startsWith('/') && !redirect.startsWith('//')
         ? redirect
-        : '/dashboard'
+        : home
     );
   } catch (error) {
     errorMessage.value = error.message;
-    console.error('Login Error:', error);
+    console.error('Login failed.');
   }
 };
 </script>

@@ -8,15 +8,22 @@
       </div>
       <nav class="sidebar-menu">
         <router-link to="/dashboard" class="menu-item" exact-active-class="router-link-active">📊 Dashboard</router-link>
-
-        <router-link to="/dashboard/employees" class="menu-item">👥 Employees</router-link>
-        <router-link to="/dashboard/departments" class="menu-item">🏢 Departments</router-link>
-        <router-link to="/dashboard/attendance" class="menu-item">📅 Attendance</router-link>
-        <router-link to="/dashboard/leaves" class="menu-item">✉️ Leaves</router-link>
-
-        <router-link to="/dashboard/payroll" class="menu-item">💵 Payroll</router-link>
-        <router-link to="/dashboard/reports" class="menu-item">📊 Reports</router-link>
-        <router-link to="/dashboard/settings" class="menu-item">⚙️ Settings</router-link>
+        <template v-if="isEmployee">
+          <router-link to="/dashboard/profile" class="menu-item">👤 My Profile</router-link>
+          <router-link to="/dashboard/my-attendance" class="menu-item">📅 My Attendance</router-link>
+          <router-link to="/dashboard/my-leaves" class="menu-item">✉️ My Leaves</router-link>
+          <router-link to="/dashboard/my-payslips" class="menu-item">💵 My Payslips</router-link>
+          <router-link to="/dashboard/change-password" class="menu-item">🔒 Change Password</router-link>
+        </template>
+        <template v-else>
+          <router-link to="/dashboard/employees" class="menu-item">👥 Employees</router-link>
+          <router-link to="/dashboard/departments" class="menu-item">🏢 Departments</router-link>
+          <router-link to="/dashboard/attendance" class="menu-item">📅 Attendance</router-link>
+          <router-link to="/dashboard/leaves" class="menu-item">✉️ Leaves</router-link>
+          <router-link to="/dashboard/payroll" class="menu-item">💵 Payroll</router-link>
+          <router-link to="/dashboard/reports" class="menu-item">📊 Reports</router-link>
+          <router-link to="/dashboard/settings" class="menu-item">⚙️ Settings</router-link>
+        </template>
       </nav>
       <div class="sidebar-footer">
         <button type="button" class="logout-btn" @click="logout">🚪 Logout</button>
@@ -27,14 +34,14 @@
       <header class="top-header">
         <div class="header-title">
           <h2>Welcome back, {{ displayName }}! 👋</h2>
-          <p class="subtitle">Here's what's happening in your organization today.</p>
+          <p class="subtitle">{{ isEmployee ? 'Your work, leave, and payslip overview.' : "Here's what's happening in your organization today." }}</p>
         </div>
         <div class="user-profile-section">
-          <router-link to="/dashboard/leaves" class="notification-icon" aria-label="View leave requests">🔔<span class="noti-badge">{{ pendingLeaves }}</span></router-link>
-          <div class="user-avatar">AD</div>
+          <router-link v-if="!isEmployee" to="/dashboard/leaves" class="notification-icon" aria-label="View leave requests">🔔<span class="noti-badge">{{ pendingLeaves }}</span></router-link>
+          <div class="user-avatar">{{ userInitials }}</div>
           <div class="user-info">
             <span class="user-name">{{ displayName }}</span>
-            <span class="user-role">{{ userPosition }}</span>
+            <span v-if="userPosition" class="user-role">{{ userPosition }}</span>
           </div>
         </div>
       </header>
@@ -45,14 +52,15 @@
          <router-view :key="$route.fullPath" />
         </div>
 
+        <EmployeeDashboard v-else-if="isEmployee && $route.path === '/dashboard'" />
         <div v-else>
+          <EmptyState v-if="dashboardLoading" message="Loading dashboard..." />
           <div class="stats-grid">
             <div class="stat-card">
               <div class="card-icon blue-bg">👥</div>
               <div class="card-data">
                 <h4>Total Employees</h4>
                 <p class="stat-number">{{ totalEmployees }}</p>
-                <span class="trend font-green">▲ 8 this month</span>
               </div>
             </div>
             <div class="stat-card">
@@ -60,7 +68,6 @@
               <div class="card-data">
                 <h4>Departments</h4>
                 <p class="stat-number">{{ totalDepartments }}</p>
-                <span class="trend font-gray">No change</span>
               </div>
             </div>
             <div class="stat-card">
@@ -68,7 +75,6 @@
               <div class="card-data">
                 <h4>Present Today</h4>
                 <p class="stat-number">{{ presentToday }}</p>
-                <span class="trend font-orange">● 81.67%</span>
               </div>
             </div>
             <div class="stat-card">
@@ -85,25 +91,19 @@
             <div class="grid-card">
               <h3>Attendance Overview</h3>
               <div class="chart-container">
-                <canvas id="attendanceChart" ref="attendanceChartRef"></canvas>
+                <canvas v-if="attendanceRecords.length" id="attendanceChart" ref="attendanceChartRef"></canvas>
+                <EmptyState v-else :message="dashboardLoading ? 'Loading attendance...' : 'No attendance data yet'" height="100%" />
               </div>
             </div>
 
             <div class="grid-card">
               <h3>Recent Leave Requests</h3>
               <div class="leave-list">
-                <div class="leave-item">
-                  <div class="leave-user">Kavindu Perera</div>
-                  <span class="leave-badge pending">Pending</span>
+                <div v-for="leave in recentLeaveRequests" :key="leave.id" class="leave-item">
+                  <div class="leave-user">{{ leave.employee }}</div>
+                  <span class="leave-badge" :class="(leave.status || '').toLowerCase()">{{ leave.status || 'Unknown' }}</span>
                 </div>
-                <div class="leave-item">
-                  <div class="leave-user">Nimesha Fernando</div>
-                  <span class="leave-badge pending">Pending</span>
-                </div>
-                <div class="leave-item">
-                  <div class="leave-user">Tharushi Silva</div>
-                  <span class="leave-badge approved">Approved</span>
-                </div>
+                <EmptyState v-if="!dashboardLoading && !recentLeaveRequests.length" message="No leave requests yet" />
               </div>
             </div>
           </div>
@@ -121,23 +121,14 @@
                   </tr>
                 </thead>
                 <tbody>
-                  <tr>
-                    <td>EMP001</td>
-                    <td>Dhanushka Wickramasinghe</td>
-                    <td>IT</td>
-                    <td><span class="status-t active">Active</span></td>
+                  <tr v-for="employee in recentEmployees" :key="employee.ID || employee.employee_id">
+                    <td>{{ employee.employee_id }}</td>
+                    <td>{{ employee.full_name }}</td>
+                    <td>{{ employee.department }}</td>
+                    <td><span class="status-t" :class="(employee.status || '').toLowerCase() === 'active' ? 'active' : ''">{{ employee.status || 'Unknown' }}</span></td>
                   </tr>
-                  <tr>
-                    <td>EMP002</td>
-                    <td>Hasini Fernando</td>
-                    <td>HR</td>
-                    <td><span class="status-t active">Active</span></td>
-                  </tr>
-                  <tr>
-                    <td>EMP003</td>
-                    <td>Kasun Perera</td>
-                    <td>Finance</td>
-                    <td><span class="status-t active">Active</span></td>
+                  <tr v-if="!dashboardLoading && !recentEmployees.length">
+                    <td colspan="4"><EmptyState message="No employees yet" /></td>
                   </tr>
                 </tbody>
               </table>
@@ -146,7 +137,8 @@
             <div class="grid-card">
               <h3>Department Distribution</h3>
               <div class="chart-container pie-size">
-                <canvas id="deptPieChart" ref="deptPieChartRef"></canvas>
+                <canvas v-if="departmentDistribution.length" id="deptPieChart" ref="deptPieChartRef"></canvas>
+                <EmptyState v-else :message="dashboardLoading ? 'Loading department data...' : 'No department data yet'" height="100%" />
               </div>
             </div>
           </div>
@@ -160,7 +152,9 @@
 import { onMounted, onBeforeUnmount, nextTick, ref, watch, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import Chart from 'chart.js/auto';
-import { apiGet } from '@/api';
+import { apiGet, clearAuthSession } from '@/api';
+import EmptyState from '@/components/EmptyState.vue';
+import EmployeeDashboard from './EmployeeDashboard.vue';
 
 const route = useRoute();
 const router = useRouter();
@@ -170,31 +164,86 @@ const totalEmployees = ref(0);
 const totalDepartments = ref(0);
 const presentToday = ref(0);
 const pendingLeaves = ref(0);
+const dashboardLoading = ref(false);
 const dashboardError = ref('');
-const authUser = ref({});
-const displayName = computed(() => authUser.value.full_name || 'Admin');
-const userPosition = computed(() => authUser.value.position || 'HR Manager');
+const authUser = ref(readStoredUser());
+const isEmployee = computed(() => authUser.value.role === 'Employee');
+const employeeRecords = ref([]);
+const leaveRequests = ref([]);
+const attendanceRecords = ref([]);
+const displayName = computed(() => authUser.value.full_name || authUser.value.email || 'User');
+const userPosition = computed(() => authUser.value.position || '');
+const userInitials = computed(() => displayName.value.split(/\s+/).map(part => part[0]).join('').slice(0, 2).toUpperCase());
+const recentEmployees = computed(() => [...employeeRecords.value]
+  .sort((a, b) => {
+    const dateA = new Date(a.CreatedAt).getTime();
+    const dateB = new Date(b.CreatedAt).getTime();
+    if (Number.isNaN(dateA)) return Number.isNaN(dateB) ? 0 : 1;
+    if (Number.isNaN(dateB)) return -1;
+    return dateB - dateA;
+  })
+  .slice(0, 5));
+const recentLeaveRequests = computed(() => leaveRequests.value.slice(0, 5));
+const departmentDistribution = computed(() => {
+  const counts = new Map();
+  for (const employee of employeeRecords.value) {
+    const department = employee.department?.trim();
+    if (department) counts.set(department, (counts.get(department) || 0) + 1);
+  }
+  return [...counts].map(([label, count]) => ({ label, count }));
+});
 const chartInstances = {
   attendance: null,
   deptPie: null
 };
-
-const loadDashboardSummary = async () => {
+function readStoredUser() {
   try {
-    const data = await apiGet('/api/dashboard-summary');
-    totalEmployees.value = data.total_employees ?? 0;
-    totalDepartments.value = data.total_departments ?? 0;
-    presentToday.value = data.present_today ?? 0;
-    pendingLeaves.value = data.pending_leaves ?? 0;
+    return JSON.parse(localStorage.getItem('authUser') || '{}');
+  } catch {
+    return {};
+  }
+}
+const updateAuthUser = (event) => {
+  authUser.value = event.detail;
+};
+
+const loadDashboard = async () => {
+  if (isEmployee.value) return;
+  dashboardLoading.value = true;
+  dashboardError.value = '';
+  try {
+    const [summary, employees, leaves, attendance] = await Promise.all([
+      apiGet('/api/dashboard-summary'),
+      apiGet('/api/employees'),
+      apiGet('/api/leaves'),
+      apiGet('/api/attendance'),
+    ]);
+    totalEmployees.value = Number(summary.total_employees) || 0;
+    totalDepartments.value = Number(summary.total_departments) || 0;
+    presentToday.value = Number(summary.present_today) || 0;
+    pendingLeaves.value = Number(summary.pending_leaves) || 0;
+    employeeRecords.value = Array.isArray(employees) ? employees : [];
+    leaveRequests.value = Array.isArray(leaves.requests) ? leaves.requests : [];
+    attendanceRecords.value = Array.isArray(attendance.attendance) ? attendance.attendance : [];
+    await createCharts();
   } catch (error) {
     console.error('Unable to load dashboard summary', error);
-    dashboardError.value = error.message;
+    dashboardError.value = `Unable to load dashboard data: ${error.message}`;
+    totalEmployees.value = 0;
+    totalDepartments.value = 0;
+    presentToday.value = 0;
+    pendingLeaves.value = 0;
+    employeeRecords.value = [];
+    leaveRequests.value = [];
+    attendanceRecords.value = [];
+    await createCharts();
+  } finally {
+    dashboardLoading.value = false;
   }
 };
 
 const logout = () => {
-  localStorage.removeItem('authToken');
-  localStorage.removeItem('authUser');
+  clearAuthSession();
   router.push('/login');
 };
 
@@ -214,21 +263,19 @@ const createCharts = async () => {
   await nextTick();
   destroyCharts();
 
+  const attendanceLabels = [...new Set(attendanceRecords.value.map(record => record.status || 'Unknown'))];
   const ctxLine = attendanceChartRef.value;
-  if (ctxLine) {
+  if (ctxLine && attendanceRecords.value.length) {
     chartInstances.attendance = new Chart(ctxLine, {
-      type: 'line',
+      type: 'bar',
       data: {
-        labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+        labels: attendanceLabels,
         datasets: [{
-          label: 'Attendance',
-          data: [85, 98, 92, 90, 96, 35, 70],
+          label: 'Attendance records',
+          data: attendanceLabels.map(status => attendanceRecords.value.filter(record => (record.status || 'Unknown') === status).length),
           borderColor: '#10b981',
-          backgroundColor: 'rgba(16, 185, 129, 0.05)',
-          tension: 0.4,
-          fill: true,
-          borderWidth: 3,
-          pointBackgroundColor: '#10b981'
+          backgroundColor: 'rgba(16, 185, 129, 0.35)',
+          borderWidth: 2,
         }]
       },
       options: {
@@ -240,13 +287,13 @@ const createCharts = async () => {
   }
 
   const ctxPie = deptPieChartRef.value;
-  if (ctxPie) {
+  if (ctxPie && departmentDistribution.value.length) {
     chartInstances.deptPie = new Chart(ctxPie, {
       type: 'doughnut',
       data: {
-        labels: ['IT', 'HR', 'Finance', 'Marketing', 'Other'],
+        labels: departmentDistribution.value.map(department => department.label),
         datasets: [{
-          data: [35, 20, 15, 15, 15],
+          data: departmentDistribution.value.map(department => department.count),
           backgroundColor: ['#244b3e', '#047857', '#10b981', '#34d399', '#a7f3d0']
         }]
       },
@@ -260,17 +307,9 @@ const createCharts = async () => {
 };
 
 onMounted(async () => {
-  const savedUser = localStorage.getItem('authUser');
-  if (savedUser) {
-    try {
-      authUser.value = JSON.parse(savedUser);
-    } catch (error) {
-      console.error('Unable to read signed-in user', error);
-    }
-  }
+  window.addEventListener('auth-user-updated', updateAuthUser);
   if (route.path === '/dashboard') {
-    await loadDashboardSummary();
-    createCharts();
+    await loadDashboard();
   }
 });
 
@@ -278,9 +317,7 @@ watch(
   () => route.fullPath,
   (newPath) => {
     if (newPath === '/dashboard') {
-      dashboardError.value = '';
-      loadDashboardSummary();
-      createCharts();
+      loadDashboard();
     } else {
       destroyCharts();
     }
@@ -288,6 +325,7 @@ watch(
 );
 
 onBeforeUnmount(() => {
+  window.removeEventListener('auth-user-updated', updateAuthUser);
   destroyCharts();
 });
 </script>

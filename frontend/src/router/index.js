@@ -7,15 +7,14 @@ import Departments from '../views/Departments.vue'
 import Attendance from '../views/Attendance.vue'
 import Leaves from '../views/Leaves.vue'
 
-const DashboardOverview = {
-  template: `
-    <div class="stats-grid">
-      <div class="stat-card"><h4>Total Employees</h4><p class="stat-number">124</p></div>
-      <div class="stat-card"><h4>On Leave Today</h4><p class="stat-number alert">5</p></div>
-      <div class="stat-card"><h4>Total Departments</h4><p class="stat-number">6</p></div>
-    </div>
-  `
-}
+const managementRoles = ['Admin', 'HR Manager']
+const employeeRoutes = [
+  { path: 'profile', name: 'MyProfile', component: () => import('../views/MyProfile.vue'), meta: { roles: ['Employee'] } },
+  { path: 'my-attendance', name: 'MyAttendance', component: () => import('../views/MyAttendance.vue'), meta: { roles: ['Employee'] } },
+  { path: 'my-leaves', name: 'MyLeaves', component: () => import('../views/MyLeaves.vue'), meta: { roles: ['Employee'] } },
+  { path: 'my-payslips', name: 'MyPayslips', component: () => import('../views/MyPayslips.vue'), meta: { roles: ['Employee'] } },
+  { path: 'change-password', name: 'ChangePassword', component: () => import('../views/ChangePassword.vue'), meta: { roles: ['Employee'] } },
+]
 
 const routes = [
   { path: '/', redirect: '/login' },
@@ -23,27 +22,31 @@ const routes = [
   {
     path: '/dashboard',
     component: Dashboard,
+    meta: { requiresAuth: true },
     children: [
-      { path: '', component: DashboardOverview },
-      { path: 'employees', component: Employees },
-      { path: 'departments', component: Departments },
-      { path: 'attendance', component: Attendance },
-      { path: 'leaves', component: Leaves },
+      { path: 'employees', component: Employees, meta: { roles: managementRoles } },
+      { path: 'departments', component: Departments, meta: { roles: managementRoles } },
+      { path: 'attendance', component: Attendance, meta: { roles: managementRoles } },
+      { path: 'leaves', component: Leaves, meta: { roles: managementRoles } },
       {
         path: 'payroll',
         name: 'Payroll',
-        component: () => import('../views/Payroll.vue')
+        component: () => import('../views/Payroll.vue'),
+        meta: { roles: managementRoles }
       },
       {
         path: 'reports',
         name: 'Reports',
-        component: () => import('../views/Reports.vue')
+        component: () => import('../views/Reports.vue'),
+        meta: { roles: managementRoles }
       },
       {
         path: 'settings',
         name: 'Settings',
-        component: () => import('../views/Settings.vue')
-      }
+        component: () => import('../views/Settings.vue'),
+        meta: { roles: managementRoles }
+      },
+      ...employeeRoutes,
     ]
   }
 ]
@@ -54,15 +57,28 @@ const router = createRouter({
 })
 
 router.beforeEach((to) => {
-  const isAuthenticated = Boolean(localStorage.getItem('authToken'))
-  const requiresAuthentication = to.matched.some((record) => record.path.startsWith('/dashboard'))
+  const token = localStorage.getItem('authToken')
+  const isAuthenticated = Boolean(token)
+  let user = {}
+  try {
+    user = JSON.parse(localStorage.getItem('authUser') || '{}')
+  } catch {
+    user = {}
+  }
+  const role = user.role
+  const home = '/dashboard'
 
-  if (requiresAuthentication && !isAuthenticated) {
+  if (to.matched.some(record => record.meta.requiresAuth) && !isAuthenticated) {
     return { path: '/login', query: { redirect: to.fullPath } }
   }
 
   if (to.path === '/login' && isAuthenticated) {
-    return '/dashboard'
+    return home
+  }
+
+  const allowedRoles = to.matched.map(record => record.meta.roles).filter(Boolean).flat()
+  if (allowedRoles.length && !allowedRoles.includes(role)) {
+    return home
   }
 })
 
